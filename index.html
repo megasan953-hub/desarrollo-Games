@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Action RPG - Criptas de Eldermoor</title>
+    <style>
+        body {
+            background-color: #0b0f19;
+            color: #f0f6fc;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        .game-wrapper {
+            text-align: center;
+            background: #161b22;
+            padding: 15px;
+            border-radius: 12px;
+            border: 2px solid #30363d;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+        }
+        .header-info {
+            display: flex;
+            justify-content: space-between;
+            width: 600px;
+            margin-bottom: 10px;
+            font-size: 1rem;
+            font-weight: bold;
+            color: #58a6ff;
+        }
+        canvas {
+            background-color: #11141d;
+            border: 3px solid #30363d;
+            border-radius: 6px;
+            display: block;
+        }
+        .controls-hint {
+            margin-top: 10px;
+            font-size: 0.8rem;
+            color: #8b949e;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-wrapper">
+        <div class="header-info">
+            <div>HP: <span id="ui-hp" style="color: #f85149;">100</span>/100</div>
+            <div>OLEADA: <span id="ui-wave" style="color: #3fb950;">1</span></div>
+            <div>ORO: <span id="ui-gold" style="color: #d29922;">0</span></div>
+            <div>ENEMIGOS: <span id="ui-enemies">0</span></div>
+        </div>
+
+        <canvas id="gameCanvas" width="600" height="400"></canvas>
+
+        <div class="controls-hint">
+            Usa <b>W, A, S, D</b> para moverte | <b>Clic Izquierdo</b> para atacar con espada | <b>Espacio</b> para disparar Flecha Mágica
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Referencias de UI
+        const uiHp = document.getElementById("ui-hp");
+        const uiWave = document.getElementById("ui-wave");
+        const uiGold = document.getElementById("ui-gold");
+        const uiEnemies = document.getElementById("ui-enemies");
+
+        // Estado del Juego
+        let gameActive = true;
+        let wave = 1;
+        let gold = 0;
+
+        // Entidad Jugador
+        let player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            size: 16,
+            speed: 3,
+            hp: 100,
+            maxHp: 100,
+            color: "#58a6ff",
+            attackCooldown: 0,
+            direction: "down" // up, down, left, right
+        };
+
+        let keys = {};
+        let mouse = { x: 0, y: 0, clicked: false };
+
+        let enemies = [];
+        let projectiles = [];
+        let particles = [];
+        let goldCoins = [];
+
+        // Captura de Controles
+        window.addEventListener("keydown", (e) => keys[e.key.toLowerCase()] = true);
+        window.addEventListener("keyup", (e) => keys[e.key.toLowerCase()] = false);
+        
+        canvas.addEventListener("mousemove", (e) => {
+            let rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener("mousedown", () => {
+            if (player.attackCooldown <= 0 && gameActive) {
+                playerMeleeAttack();
+                player.attackCooldown = 20; // fotogramas de cooldown
+            }
+        });
+
+        window.addEventListener("keydown", (e) => {
+            if (e.code === "Space" && gameActive) {
+                playerShootArrow();
+            }
+        });
+
+        // Generar Oleada de Enemigos
+        function startWave() {
+            enemies = [];
+            let count = 3 + wave * 2;
+            for (let i = 0; i < count; i++) {
+                let edge = Math.floor(Math.random() * 4);
+                let ex, ey;
+                if (edge === 0) { ex = Math.random() * canvas.width; ey = -20; }
+                else if (edge === 1) { ex = Math.random() * canvas.width; ey = canvas.height + 20; }
+                else if (edge === 2) { ex = -20; ey = Math.random() * canvas.height; }
+                else { ex = canvas.width + 20; ey = Math.random() * canvas.height; }
+
+                let type = wave >= 3 && Math.random() > 0.6 ? "orc" : "goblin";
+                enemies.push({
+                    x: ex,
+                    y: ey,
+                    size: type === "orc" ? 20 : 14,
+                    speed: type === "orc" ? 1.2 : 2.0,
+                    hp: type === "orc" ? 40 : 20,
+                    maxHp: type === "orc" ? 40 : 20,
+                    damage: type === "orc" ? 15 : 8,
+                    color: type === "orc" ? "#da3633" : "#3fb950",
+                    type: type
+                });
+            }
+        }
+
+        // Ataques del Jugador
+        function playerMeleeAttack() {
+            // Rango de espada alrededor del jugador
+            let attackRange = 35;
+            enemies.forEach(enemy => {
+                let dist = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+                if (dist < attackRange + enemy.size) {
+                    enemy.hp -= 15;
+                    createParticles(enemy.x, enemy.y, "#ffcc00", 6);
+                }
+            });
+        }
+
+        function playerShootArrow() {
+            let angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+            projectiles.push({
+                x: player.x,
+                y: player.y,
+                vx: Math.cos(angle) * 6,
+                vy: Math.sin(angle) * 6,
+                size: 4,
+                damage: 20,
+                color: "#e3b341"
+            });
+        }
+
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4,
+                    life: 20,
+                    color: color
+                });
+            }
+        }
+
+        // Actualización de Lógica
+        function update() {
+            if (!gameActive) return;
+
+            // Movimiento del Jugador
+            let dx = 0, dy = 0;
+            if (keys['w'] || keys['arrowup']) dy -= 1;
+            if (keys['s'] || keys['arrowdown']) dy += 1;
+            if (keys['a'] || keys['arrowleft']) dx -= 1;
+            if (keys['d'] || keys['arrowright']) dx += 1;
+
+            if (dx !== 0 && dy !== 0) {
+                dx *= 0.7071;
+                dy *= 0.7071;
+            }
+
+            player.x = Math.max(player.size, Math.min(canvas.width - player.size, player.x + dx * player.speed));
+            player.y = Math.max(player.size, Math.min(canvas.height - player.size, player.y + dy * player.speed));
+
+            if (player.attackCooldown > 0) player.attackCooldown--;
+
+            // Actualizar Proyectiles
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                let p = projectiles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // Colisión proyectil con enemigos
+                let hit = false;
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    let e = enemies[j];
+                    if (Math.hypot(p.x - e.x, p.y - e.y) < p.size + e.size) {
+                        e.hp -= p.damage;
+                        createParticles(e.x, e.y, "#e3b341", 4);
+                        hit = true;
+                        break;
+                    }
+                }
+
+                if (hit || p.x < 0 || p.x > canvas.width || p.y < 0 || p.y > canvas.height) {
+                    projectiles.splice(i, 1);
+                }
+            }
+
+            // Actualizar Enemigos (IA de Persecución)
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let e = enemies[i];
+                let angle = Math.atan2(player.y - e.y, player.x - e.x);
+                e.x += Math.cos(angle) * e.speed;
+                e.y += Math.sin(angle) * e.speed;
+
+                // Colisión Enemigo con Jugador (Daño cuerpo a cuerpo)
+                let dist = Math.hypot(player.x - e.x, player.y - e.y);
+                if (dist < player.size + e.size) {
+                    player.hp -= 0.5; // daño continuo leve al tocarse
+                }
+
+                // Muerte de Enemigo
+                if (e.hp <= 0) {
+                    createParticles(e.x, e.y, e.color, 12);
+                    goldCoins.push({ x: e.x, y: e.y, amount: e.type === "orc" ? 15 : 5 });
+                    enemies.splice(i, 1);
+                }
+            }
+
+            // Recoger Monedas de Oro por proximidad
+            for (let i = goldCoins.length - 1; i >= 0; i--) {
+                let coin = goldCoins[i];
+                if (Math.hypot(player.x - coin.x, player.y - coin.y) < player.size + 12) {
+                    gold += coin.amount;
+                    goldCoins.splice(i, 1);
+                }
+            }
+
+            // Partículas
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let pt = particles[i];
+                pt.x += pt.vx;
+                pt.y += pt.vy;
+                pt.life--;
+                if (pt.life <= 0) particles.splice(i, 1);
+            }
+
+            // Comprobar Fin de Oleada
+            if (enemies.length === 0) {
+                wave++;
+                player.hp = Math.min(player.maxHp, player.hp + 25); // Curación ligera entre oleadas
+                startWave();
+            }
+
+            // Comprobar Game Over
+            if (player.hp <= 0) {
+                player.hp = 0;
+                gameActive = false;
+            }
+
+            // Actualizar Interfaz HTML
+            uiHp.textContent = Math.ceil(player.hp);
+            uiWave.textContent = wave;
+            uiGold.textContent = gold;
+            uiEnemies.textContent = enemies.length;
+        }
+
+        // Renderizado Gráfico Avanzado en Canvas
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Dibujar Patrón de Suelo Estilo Calabozo (Baldosas)
+            ctx.strokeStyle = "#1a2130";
+            ctx.lineWidth = 1;
+            for (let x = 0; x < canvas.width; x += 40) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += 40) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+            }
+
+            // Dibujar Monedas de Oro
+            goldCoins.forEach(coin => {
+                ctx.fillStyle = "#d29922";
+                ctx.beginPath();
+                ctx.arc(coin.x, coin.y, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = "#fff";
+                ctx.stroke();
+            });
+
+            // Dibujar Partículas
+            particles.forEach(pt => {
+                ctx.fillStyle = pt.color;
+                ctx.fillRect(pt.x, pt.y, 3, 3);
+            });
+
+            // Dibujar Enemigos (con sprite geométrico detallado)
+            enemies.forEach(e => {
+                ctx.fillStyle = e.color;
+                ctx.beginPath();
+                ctx.arc(e.x, e.y, e.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = "#000";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Barra de vida del enemigo
+                ctx.fillStyle = "#333";
+                ctx.fillRect(e.x - 15, e.y - e.size - 8, 30, 4);
+                ctx.fillStyle = "#f85149";
+                ctx.fillRect(e.x - 15, e.y - e.size - 8, 30 * (e.hp / e.maxHp), 4);
+            });
+
+            // Dibujar Proyectiles
+            projectiles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Dibujar Jugador (con espada/orientación procedural)
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.size, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Dibujar indicador visual del ataque cuerpo a cuerpo si está activo
+            if (player.attackCooldown > 10) {
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, player.size + 15, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            // Pantalla de Game Over
+            if (!gameActive) {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = "#f85149";
+                ctx.font = "bold 32px 'Courier New'";
+                ctx.textAlign = "center";
+                ctx.fillText("HAS MUERTO", canvas.width / 2, canvas.height / 2 - 20);
+
+                ctx.fillStyle = "#c9d1d9";
+                ctx.font = "16px 'Courier New'";
+                ctx.fillText(`Sobreviviste hasta la Oleada ${wave}`, canvas.width / 2, canvas.height / 2 + 20);
+                ctx.fillText("Recarga la página para volver a jugar", canvas.width / 2, canvas.height / 2 + 55);
+            }
+        }
+
+        // Bucle Principal del Juego (60 FPS)
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Inicializar Juego
+        startWave();
+        gameLoop();
+    </script>
+</body>
+</html>
